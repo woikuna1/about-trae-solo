@@ -1,0 +1,12 @@
+[project]
+name = "mcp-word-operator"
+version = "0.1.0"
+description = "MCP server for operating Word documents via python-docx"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "python-docx>=1.1.0",
+]
+
+[project.scripts]
+mcp-word-operator = "mcp_word_operator.server:main"

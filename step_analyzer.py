@@ -248,6 +248,7 @@ def analyze_holes(shape):
                 hole_info = {"surface_type": surf_type}
 
                 # 从内线的圆边获取半径和轴信息
+                found_circle = False
                 for adaptor_c in edge_adaptors:
                     if adaptor_c.GetType() == GeomAbs_Circle:
                         circ = adaptor_c.Circle()
@@ -257,7 +258,36 @@ def analyze_holes(shape):
                         d = circ.Axis().Direction()
                         hole_info["axis_location"] = (loc.X(), loc.Y(), loc.Z())
                         hole_info["axis_direction"] = (d.X(), d.Y(), d.Z())
+                        found_circle = True
                         break
+
+                # 纯直线内Wire（矩形/方形槽）：计算长宽
+                if not found_circle and all(t == GeomAbs_Line for t in edge_types):
+                    # 获取每条边的长度
+                    from OCP.BRepGProp import BRepGProp as BRepGProp2
+                    from OCP.GProp import GProp_GProps as GProp_GProps2
+                    edge_lengths = []
+                    for adaptor_c in edge_adaptors:
+                        # 获取边的首尾点距离
+                        first_param = adaptor_c.FirstParameter()
+                        last_param = adaptor_c.LastParameter()
+                        p1 = adaptor_c.Value(first_param)
+                        p2 = adaptor_c.Value(last_param)
+                        length = math.sqrt(
+                            (p2.X()-p1.X())**2 + (p2.Y()-p1.Y())**2 + (p2.Z()-p1.Z())**2
+                        )
+                        edge_lengths.append(length)
+                    # 去重排序，取两个不同的长度作为长和宽
+                    unique_lengths = sorted(set(round(l, 3) for l in edge_lengths))
+                    if len(unique_lengths) >= 2:
+                        hole_info["slot_length"] = max(unique_lengths)
+                        hole_info["slot_width"] = min(unique_lengths)
+                    elif len(unique_lengths) == 1:
+                        hole_info["slot_length"] = unique_lengths[0]
+                        hole_info["slot_width"] = unique_lengths[0]
+                    else:
+                        hole_info["slot_length"] = 0
+                        hole_info["slot_width"] = 0
 
                 # 分类
                 hole_info["classification"] = _classify_hole(
@@ -285,12 +315,17 @@ def _classify_hole(inner_wires_data, all_edge_types, surf_type):
 
     if has_bspline or surrounding_bspline:
         return "不规则孔（含B样条曲线）"
+    elif has_other:
+        return "不规则孔"
     elif len(inner_wires_data) == 1 and len(inner_wires_data[0][0]) == 1 and inner_wires_data[0][0][0] == GeomAbs_Circle:
         return "规则孔（单圆）"
-    elif has_circle and not has_line and not has_other:
+    elif has_circle and not has_line:
         return "规则孔（多段圆弧）"
-    elif has_circle and has_line and not has_other:
+    elif has_circle and has_line:
         return "规则孔（直线+圆弧，如键槽）"
+    elif has_line and not has_circle:
+        # 纯直线组成的内轮廓（矩形/方形槽）
+        return "规则孔（矩形/方形槽）"
     else:
         return "不规则孔"
 
@@ -692,22 +727,28 @@ def generate_report(filepath, output_dir):
         irregular_count = sum(1 for h in holes if h["classification"].startswith("不规则"))
         doc.add_paragraph(f"孔总数: {len(holes)}，规则孔: {regular_count}，不规则孔: {irregular_count}")
 
-        hole_table = doc.add_table(rows=1, cols=6)
+        hole_table = doc.add_table(rows=1, cols=7)
         hole_table.style = 'Table Grid'
         hole_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        headers = ["序号", "分类", "直径(mm)", "半径(mm)", "轴位置", "轴方向"]
+        headers = ["序号", "分类", "直径(mm)", "半径(mm)", "槽长(mm)", "槽宽(mm)", "轴位置/备注"]
         for i, h in enumerate(headers):
             hole_table.rows[0].cells[i].text = h
 
         for idx, hole in enumerate(holes, 1):
-            diameter = f"{hole.get('diameter', 0):.3f}" if hole.get('diameter') else "N/A"
-            radius = f"{hole.get('radius', 0):.3f}" if hole.get('radius') else "N/A"
+            diameter = f"{hole.get('diameter', 0):.3f}" if hole.get('diameter') else "-"
+            radius = f"{hole.get('radius', 0):.3f}" if hole.get('radius') else "-"
+            slot_length = f"{hole.get('slot_length', 0):.3f}" if hole.get('slot_length') else "-"
+            slot_width = f"{hole.get('slot_width', 0):.3f}" if hole.get('slot_width') else "-"
             axis_loc = hole.get("axis_location", None)
             axis_dir = hole.get("axis_direction", None)
-            loc_str = f"({axis_loc[0]:.3f}, {axis_loc[1]:.3f}, {axis_loc[2]:.3f})" if axis_loc else "N/A"
-            dir_str = f"({axis_dir[0]:.3f}, {axis_dir[1]:.3f}, {axis_dir[2]:.3f})" if axis_dir else "N/A"
+            if axis_loc:
+                note_str = f"({axis_loc[0]:.3f}, {axis_loc[1]:.3f}, {axis_loc[2]:.3f})"
+            elif axis_dir:
+                note_str = f"方向({axis_dir[0]:.3f}, {axis_dir[1]:.3f}, {axis_dir[2]:.3f})"
+            else:
+                note_str = "-"
             add_table_row(hole_table, [
-                str(idx), hole["classification"], diameter, radius, loc_str, dir_str
+                str(idx), hole["classification"], diameter, radius, slot_length, slot_width, note_str
             ])
     else:
         doc.add_paragraph("未检测到孔特征")

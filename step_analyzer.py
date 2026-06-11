@@ -13,7 +13,8 @@ from OCP.TopAbs import (
     TopAbs_VERTEX, TopAbs_EDGE, TopAbs_WIRE, TopAbs_FACE,
     TopAbs_SHELL, TopAbs_SOLID
 )
-from OCP.TopoDS import TopoDS
+from OCP.TopoDS import TopoDS, TopoDS_Compound
+from OCP.TopExp import TopExp
 from OCP.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
 from OCP.GeomAbs import (
     GeomAbs_Plane, GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Sphere,
@@ -28,6 +29,7 @@ from OCP.BRepGProp import BRepGProp
 from OCP.GProp import GProp_GProps
 from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from OCP.gp import gp_Vec
+from OCP.TopTools import TopTools_IndexedMapOfShape
 
 from docx import Document
 from docx.shared import Pt, Cm, Inches
@@ -591,6 +593,219 @@ def detect_model_type(tubes, square_tube_pairs, square_tube_cross):
 
 
 # ============================================================
+# 形状结构判断与装配件分析
+# ============================================================
+def classify_shape_structure(shape):
+    """判断STEP文件结构类型
+
+    Returns:
+        ("single_solid", solid_count) - 单零件
+        ("assembly", solid_count)     - 装配件（多Solid Compound）
+    """
+    solid_count = 0
+    exp = TopExp_Explorer(shape, TopAbs_SOLID)
+    while exp.More():
+        solid_count += 1
+        exp.Next()
+
+    if solid_count <= 1:
+        return "single_solid", solid_count
+    else:
+        return "assembly", solid_count
+
+
+def decompose_compound(shape):
+    """将Compound分解为独立的Solid列表
+
+    Returns:
+        list of TopoDS_Solid
+    """
+    solids = []
+    exp = TopExp_Explorer(shape, TopAbs_SOLID)
+    while exp.More():
+        solid = TopoDS.Solid_s(exp.Current())
+        solids.append(solid)
+        exp.Next()
+    return solids
+
+
+def _get_all_faces(shape):
+    """获取形状的所有面"""
+    faces = []
+    exp = TopExp_Explorer(shape, TopAbs_FACE)
+    while exp.More():
+        faces.append(TopoDS.Face_s(exp.Current()))
+        exp.Next()
+    return faces
+
+
+def _find_end_faces(solid):
+    """识别管/方通的端面
+
+    端面定义：沿主轴方向位于包围盒极值位置的面
+    对于圆柱面：轴向端面（圆形平面）
+    对于方通：轴向端面（矩形平面）
+
+    Returns:
+        list of {"face": TopoDS_Face, "position": "min"|"max", "axis": (dx,dy,dz)}
+    """
+    bbox = Bnd_Box()
+    BRepBndLib.Add_s(solid, bbox)
+    xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+
+    # 确定主轴方向（最长维度）
+    dims = [xmax - xmin, ymax - ymin, zmax - zmin]
+    main_axis_idx = dims.index(max(dims))
+    axis_dirs = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    main_axis = axis_dirs[main_axis_idx]
+
+    end_faces = []
+    exp = TopExp_Explorer(solid, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face_s(exp.Current())
+        adaptor = BRepAdaptor_Surface(face)
+        surf_type = adaptor.GetType()
+
+        # 端面通常是平面
+        if surf_type != GeomAbs_Plane:
+            exp.Next()
+            continue
+
+        pln = adaptor.Plane()
+        pos = pln.Position()
+        loc = pos.Location()
+        d = pos.Direction()
+
+        # 检查平面法向量是否与主轴平行
+        dot = abs(d.X() * main_axis[0] + d.Y() * main_axis[1] + d.Z() * main_axis[2])
+        if dot < 0.99:
+            exp.Next()
+            continue
+
+        # 判断端面位置（min端还是max端）
+        # 用面的位置在主轴方向的投影
+        proj = loc.X() * main_axis[0] + loc.Y() * main_axis[1] + loc.Z() * main_axis[2]
+        proj_min = xmin * main_axis[0] + ymin * main_axis[1] + zmin * main_axis[2]
+        proj_max = xmax * main_axis[0] + ymax * main_axis[1] + zmax * main_axis[2]
+
+        tolerance = max(dims) * 0.05  # 5%容差
+        if abs(proj - proj_min) < tolerance:
+            position = "min"
+        elif abs(proj - proj_max) < tolerance:
+            position = "max"
+        else:
+            exp.Next()
+            continue
+
+        end_faces.append({
+            "face": face,
+            "position": position,
+            "axis": main_axis,
+            "plane_loc": (loc.X(), loc.Y(), loc.Z()),
+        })
+        exp.Next()
+
+    return end_faces
+
+
+def analyze_assembly_connectivity(solids):
+    """分析装配件中各零件的连接关系
+
+    判断每个零件的端面是自由端（切口）还是焊接端（与其他零件连接）
+
+    Args:
+        solids: TopoDS_Solid 列表
+
+    Returns:
+        list of {
+            "part_index": int,
+            "model_type": str,
+            "end_faces": [
+                {"position": "min"|"max", "is_free": bool, "connected_to": int|None}
+            ]
+        }
+    """
+    # 先分析每个零件的基本信息和端面
+    parts_info = []
+    for idx, solid in enumerate(solids):
+        tubes = analyze_tube_structures(solid)
+        sq_pairs, sq_cross = analyze_square_tube_structures(solid)
+        model_type = detect_model_type(tubes, sq_pairs, sq_cross)
+        end_faces = _find_end_faces(solid)
+
+        parts_info.append({
+            "part_index": idx,
+            "solid": solid,
+            "model_type": model_type,
+            "tubes": tubes,
+            "sq_pairs": sq_pairs,
+            "sq_cross": sq_cross,
+            "end_faces": end_faces,
+        })
+
+    # 分析端面连接性：检查每个零件的端面是否与其他零件的面距离≈0
+    for i, part in enumerate(parts_info):
+        for ef in part["end_faces"]:
+            ef["is_free"] = True
+            ef["connected_to"] = None
+
+            # 获取端面的包围盒
+            ef_bbox = Bnd_Box()
+            BRepBndLib.Add_s(ef["face"], ef_bbox)
+            ef_xmin, ef_ymin, ef_zmin, ef_xmax, ef_ymax, ef_zmax = ef_bbox.Get()
+
+            for j, other_part in enumerate(parts_info):
+                if i == j:
+                    continue
+
+                # 快速排除：包围盒不相交的零件
+                other_bbox = Bnd_Box()
+                BRepBndLib.Add_s(other_part["solid"], other_bbox)
+                oxmin, oymin, ozmin, oxmax, oymax, ozmax = other_bbox.Get()
+
+                # 包围盒扩展一点容差后检查重叠
+                tol = 1.0  # mm
+                if (ef_xmax + tol < oxmin or ef_xmin - tol > oxmax or
+                    ef_ymax + tol < oymin or ef_ymin - tol > oymax or
+                    ef_zmax + tol < ozmin or ef_zmin - tol > ozmax):
+                    continue
+
+                # 精确距离检查
+                try:
+                    dist_calc = BRepExtrema_DistShapeShape()
+                    dist_calc.LoadS1(ef["face"])
+                    dist_calc.LoadS2(other_part["solid"])
+                    dist_calc.Perform()
+                    if dist_calc.IsDone() and dist_calc.Value() < 0.1:  # 0.1mm阈值
+                        ef["is_free"] = False
+                        ef["connected_to"] = j
+                        break
+                except Exception:
+                    pass
+
+    # 清理临时solid引用（不需要序列化）
+    result = []
+    for part in parts_info:
+        result.append({
+            "part_index": part["part_index"],
+            "model_type": part["model_type"],
+            "tubes": part["tubes"],
+            "sq_pairs": part["sq_pairs"],
+            "sq_cross": part["sq_cross"],
+            "end_faces": [
+                {
+                    "position": ef["position"],
+                    "is_free": ef["is_free"],
+                    "connected_to": ef["connected_to"],
+                }
+                for ef in part["end_faces"]
+            ],
+        })
+
+    return result
+
+
+# ============================================================
 # Word报告生成
 # ============================================================
 def fmt_length(val):
@@ -616,57 +831,64 @@ def add_table_row(table, cells_data):
     return row
 
 
-def generate_report(filepath, output_dir):
-    """生成Word分析报告"""
-    filename = os.path.basename(filepath)
-    basename = os.path.splitext(filename)[0]
-
-    print(f"正在分析: {filename}")
-
-    # 读取STEP文件
-    shape = read_step_file(filepath)
-    if shape is None:
-        print(f"  错误: 无法读取文件 {filename}")
-        return False
-
-    # ---- 分析 ----
-    topology = count_topology(shape)
-    face_types = count_face_types(shape)
-    edge_types = count_edge_types(shape)
-    bbox = get_bounding_box(shape)
-    volume, center_of_mass = get_volume(shape)
-    surface_area = get_surface_area(shape)
-    holes = analyze_holes(shape)
-    tubes = analyze_tube_structures(shape)
-    sq_pairs, sq_cross = analyze_square_tube_structures(shape)
-    wall_info = analyze_wall_thickness(shape, tubes)
+def _analyze_single_solid(solid):
+    """分析单个Solid，返回所有分析结果"""
+    topology = count_topology(solid)
+    face_types = count_face_types(solid)
+    edge_types = count_edge_types(solid)
+    bbox = get_bounding_box(solid)
+    volume, center_of_mass = get_volume(solid)
+    surface_area = get_surface_area(solid)
+    holes = analyze_holes(solid)
+    tubes = analyze_tube_structures(solid)
+    sq_pairs, sq_cross = analyze_square_tube_structures(solid)
+    wall_info = analyze_wall_thickness(solid, tubes)
     model_type = detect_model_type(tubes, sq_pairs, sq_cross)
 
-    # 模型类型中文描述
+    return {
+        "topology": topology,
+        "face_types": face_types,
+        "edge_types": edge_types,
+        "bbox": bbox,
+        "volume": volume,
+        "center_of_mass": center_of_mass,
+        "surface_area": surface_area,
+        "holes": holes,
+        "tubes": tubes,
+        "sq_pairs": sq_pairs,
+        "sq_cross": sq_cross,
+        "wall_info": wall_info,
+        "model_type": model_type,
+    }
+
+
+def _add_single_part_sections(doc, analysis, part_name=""):
+    """向Word文档添加单零件分析章节"""
+    topology = analysis["topology"]
+    face_types = analysis["face_types"]
+    edge_types = analysis["edge_types"]
+    bbox = analysis["bbox"]
+    volume = analysis["volume"]
+    center_of_mass = analysis["center_of_mass"]
+    surface_area = analysis["surface_area"]
+    holes = analysis["holes"]
+    tubes = analysis["tubes"]
+    sq_pairs = analysis["sq_pairs"]
+    sq_cross = analysis["sq_cross"]
+    wall_info = analysis["wall_info"]
+    model_type = analysis["model_type"]
+
     model_type_desc = {
         "管状结构": "该模型包含同轴的内外圆柱面，属于管状结构",
         "方通结构": "该模型包含多组平行平面对，属于方通结构",
         "一般机械件": "该模型为一般机械零件",
     }
 
-    # ---- 生成Word文档 ----
-    doc = Document()
-
-    # 设置默认字体
-    style = doc.styles['Normal']
-    font = style.font
-    font.name = '宋体'
-    font.size = Pt(10.5)
-
-    # 标题
-    doc.add_heading(f"{basename} 分析报告", level=0)
-
     # 1. 概览
-    doc.add_heading("概览", level=1)
+    doc.add_heading(f"概览{part_name}", level=1)
     overview_table = doc.add_table(rows=0, cols=2)
     overview_table.style = 'Table Grid'
     overview_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    add_table_row(overview_table, ["文件名", filename])
     add_table_row(overview_table, ["模型类型", model_type])
     add_table_row(overview_table, ["简要描述", model_type_desc.get(model_type, "")])
     add_table_row(overview_table, ["顶点数", str(topology["顶点"])])
@@ -674,7 +896,7 @@ def generate_report(filepath, output_dir):
     add_table_row(overview_table, ["面数", str(topology["面"])])
 
     # 2. 拓扑信息
-    doc.add_heading("拓扑信息", level=1)
+    doc.add_heading(f"拓扑信息{part_name}", level=1)
     topo_table = doc.add_table(rows=1, cols=2)
     topo_table.style = 'Table Grid'
     topo_table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -684,7 +906,7 @@ def generate_report(filepath, output_dir):
         add_table_row(topo_table, [name, str(topology[name])])
 
     # 3. 几何类型分布
-    doc.add_heading("几何类型分布", level=1)
+    doc.add_heading(f"几何类型分布{part_name}", level=1)
 
     doc.add_heading("面类型统计", level=2)
     face_table = doc.add_table(rows=1, cols=2)
@@ -705,7 +927,7 @@ def generate_report(filepath, output_dir):
         add_table_row(edge_table, [tname, str(count)])
 
     # 4. 尺寸信息
-    doc.add_heading("尺寸信息", level=1)
+    doc.add_heading(f"尺寸信息{part_name}", level=1)
     dim_table = doc.add_table(rows=0, cols=2)
     dim_table.style = 'Table Grid'
     dim_table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -721,7 +943,7 @@ def generate_report(filepath, output_dir):
     add_table_row(dim_table, ["质心位置", f"({com_x:.3f}, {com_y:.3f}, {com_z:.3f}) mm"])
 
     # 5. 孔特征
-    doc.add_heading("孔特征", level=1)
+    doc.add_heading(f"孔特征{part_name}", level=1)
     if holes:
         regular_count = sum(1 for h in holes if h["classification"].startswith("规则"))
         irregular_count = sum(1 for h in holes if h["classification"].startswith("不规则"))
@@ -755,7 +977,7 @@ def generate_report(filepath, output_dir):
 
     # 6. 管状/方通结构
     if tubes:
-        doc.add_heading("管状结构", level=1)
+        doc.add_heading(f"管状结构{part_name}", level=1)
         doc.add_paragraph(f"检测到 {len(tubes)} 组同轴圆柱面对")
 
         tube_table = doc.add_table(rows=1, cols=6)
@@ -778,7 +1000,7 @@ def generate_report(filepath, output_dir):
             ])
 
     if sq_cross:
-        doc.add_heading("方通结构", level=1)
+        doc.add_heading(f"方通结构{part_name}", level=1)
         for idx, sq in enumerate(sq_cross, 1):
             doc.add_paragraph(
                 f"方通截面 {idx}: "
@@ -788,7 +1010,7 @@ def generate_report(filepath, output_dir):
                 f"方向2对数 = {sq['pairs_count_2']}"
             )
     elif sq_pairs:
-        doc.add_heading("方通结构", level=1)
+        doc.add_heading(f"方通结构{part_name}", level=1)
         doc.add_paragraph(f"检测到 {len(sq_pairs)} 组平行平面对")
         sq_table = doc.add_table(rows=1, cols=4)
         sq_table.style = 'Table Grid'
@@ -805,7 +1027,7 @@ def generate_report(filepath, output_dir):
             ])
 
     # 7. 壁厚信息
-    doc.add_heading("壁厚信息", level=1)
+    doc.add_heading(f"壁厚信息{part_name}", level=1)
     if wall_info:
         wall_table = doc.add_table(rows=1, cols=4)
         wall_table.style = 'Table Grid'
@@ -822,6 +1044,181 @@ def generate_report(filepath, output_dir):
             ])
     else:
         doc.add_paragraph("未检测到壁厚信息")
+
+
+def _generate_assembly_report(doc, shape, filename, basename):
+    """生成装配件（多Solid Compound）分析报告"""
+    solids = decompose_compound(shape)
+    print(f"  检测到装配件，包含 {len(solids)} 个零件")
+
+    # 整体分析
+    overall_topology = count_topology(shape)
+    overall_bbox = get_bounding_box(shape)
+    overall_volume, overall_com = get_volume(shape)
+    overall_surface_area = get_surface_area(shape)
+
+    # 装配件连接性分析
+    connectivity = analyze_assembly_connectivity(solids)
+
+    # 每个零件的详细分析
+    part_analyses = []
+    for idx, solid in enumerate(solids):
+        print(f"  分析零件 {idx + 1}/{len(solids)}...")
+        analysis = _analyze_single_solid(solid)
+        part_analyses.append(analysis)
+
+    # ---- 装配件概览 ----
+    doc.add_heading("装配件概览", level=1)
+    overview_table = doc.add_table(rows=0, cols=2)
+    overview_table.style = 'Table Grid'
+    overview_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    add_table_row(overview_table, ["文件名", filename])
+    add_table_row(overview_table, ["结构类型", f"装配件（{len(solids)} 个零件）"])
+    add_table_row(overview_table, ["整体顶点数", str(overall_topology["顶点"])])
+    add_table_row(overview_table, ["整体边数", str(overall_topology["边"])])
+    add_table_row(overview_table, ["整体面数", str(overall_topology["面"])])
+    add_table_row(overview_table, ["整体X尺寸", fmt_length(overall_bbox["x_size"])])
+    add_table_row(overview_table, ["整体Y尺寸", fmt_length(overall_bbox["y_size"])])
+    add_table_row(overview_table, ["整体Z尺寸", fmt_length(overall_bbox["z_size"])])
+    add_table_row(overview_table, ["整体体积", fmt_volume(overall_volume)])
+    add_table_row(overview_table, ["整体表面积", fmt_area(overall_surface_area)])
+
+    # ---- 零件清单 ----
+    doc.add_heading("零件清单", level=1)
+    part_list_table = doc.add_table(rows=1, cols=5)
+    part_list_table.style = 'Table Grid'
+    part_list_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    headers = ["零件编号", "模型类型", "体积(mm³)", "壁厚(mm)", "孔数量"]
+    for i, h in enumerate(headers):
+        part_list_table.rows[0].cells[i].text = h
+
+    for idx, (analysis, conn) in enumerate(zip(part_analyses, connectivity)):
+        wall_thick = "-"
+        if analysis["wall_info"]:
+            wall_thick = fmt_length(analysis["wall_info"][0]["wall_thickness"])
+        elif analysis["tubes"]:
+            wall_thick = fmt_length(analysis["tubes"][0]["wall_thickness"])
+        add_table_row(part_list_table, [
+            f"零件 {idx + 1}",
+            analysis["model_type"],
+            fmt_volume(analysis["volume"]),
+            wall_thick,
+            str(len(analysis["holes"])),
+        ])
+
+    # ---- 端面连接性分析 ----
+    doc.add_heading("端面连接性分析", level=1)
+    doc.add_paragraph("判断每个零件的端面是自由端（切口）还是焊接端（与其他零件连接）")
+
+    conn_table = doc.add_table(rows=1, cols=5)
+    conn_table.style = 'Table Grid'
+    conn_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    headers = ["零件编号", "端面位置", "状态", "连接对象", "说明"]
+    for i, h in enumerate(headers):
+        conn_table.rows[0].cells[i].text = h
+
+    total_free_ends = 0
+    for idx, conn in enumerate(connectivity):
+        if not conn["end_faces"]:
+            add_table_row(conn_table, [
+                f"零件 {idx + 1}", "-", "无端面", "-", "非管/方通结构或端面未识别"
+            ])
+            continue
+        for ef in conn["end_faces"]:
+            pos_name = "起始端" if ef["position"] == "min" else "末端"
+            if ef["is_free"]:
+                status = "自由端（切口）"
+                total_free_ends += 1
+                connected = "-"
+                desc = "该端面未被其他零件覆盖，属于切口"
+            else:
+                status = "焊接端"
+                connected = f"零件 {ef['connected_to'] + 1}"
+                desc = "该端面与其他零件连接，不属于切口"
+            add_table_row(conn_table, [
+                f"零件 {idx + 1}", pos_name, status, connected, desc
+            ])
+
+    doc.add_paragraph(f"自由端（切口）总数: {total_free_ends}")
+
+    # ---- 每个零件详细分析 ----
+    for idx, analysis in enumerate(part_analyses):
+        doc.add_heading(f"零件 {idx + 1} 详细分析", level=1)
+        _add_single_part_sections(doc, analysis, part_name=f"（零件 {idx + 1}）")
+
+    # ---- 装配件汇总 ----
+    doc.add_heading("装配件汇总", level=1)
+    total_holes = sum(len(a["holes"]) for a in part_analyses)
+    regular_holes = sum(sum(1 for h in a["holes"] if h["classification"].startswith("规则")) for a in part_analyses)
+    irregular_holes = total_holes - regular_holes
+    total_tubes = sum(len(a["tubes"]) for a in part_analyses)
+
+    summary_table = doc.add_table(rows=0, cols=2)
+    summary_table.style = 'Table Grid'
+    summary_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    add_table_row(summary_table, ["零件总数", str(len(solids))])
+    add_table_row(summary_table, ["自由端（切口）总数", str(total_free_ends)])
+    add_table_row(summary_table, ["孔总数", str(total_holes)])
+    add_table_row(summary_table, ["规则孔数", str(regular_holes)])
+    add_table_row(summary_table, ["不规则孔数", str(irregular_holes)])
+    add_table_row(summary_table, ["管状结构组数", str(total_tubes)])
+    add_table_row(summary_table, ["整体体积", fmt_volume(overall_volume)])
+
+
+def generate_report(filepath, output_dir):
+    """生成Word分析报告（自动判断单零件/装配件）"""
+    filename = os.path.basename(filepath)
+    basename = os.path.splitext(filename)[0]
+
+    print(f"正在分析: {filename}")
+
+    # 读取STEP文件
+    shape = read_step_file(filepath)
+    if shape is None:
+        print(f"  错误: 无法读取文件 {filename}")
+        return False
+
+    # 判断结构类型
+    structure_type, solid_count = classify_shape_structure(shape)
+    print(f"  结构类型: {structure_type}, Solid数量: {solid_count}")
+
+    # 创建Word文档
+    doc = Document()
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = '宋体'
+    font.size = Pt(10.5)
+
+    # 标题
+    if structure_type == "assembly":
+        doc.add_heading(f"{basename} 装配件分析报告", level=0)
+    else:
+        doc.add_heading(f"{basename} 分析报告", level=0)
+
+    # 根据结构类型走不同路径
+    if structure_type == "assembly":
+        _generate_assembly_report(doc, shape, filename, basename)
+    else:
+        # 单零件分析
+        analysis = _analyze_single_solid(shape)
+        # 概览中添加文件名
+        overview_table = doc.add_table(rows=0, cols=2)
+        overview_table.style = 'Table Grid'
+        overview_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        add_table_row(overview_table, ["文件名", filename])
+        model_type_desc = {
+            "管状结构": "该模型包含同轴的内外圆柱面，属于管状结构",
+            "方通结构": "该模型包含多组平行平面对，属于方通结构",
+            "一般机械件": "该模型为一般机械零件",
+        }
+        add_table_row(overview_table, ["模型类型", analysis["model_type"]])
+        add_table_row(overview_table, ["简要描述", model_type_desc.get(analysis["model_type"], "")])
+        add_table_row(overview_table, ["顶点数", str(analysis["topology"]["顶点"])])
+        add_table_row(overview_table, ["边数", str(analysis["topology"]["边"])])
+        add_table_row(overview_table, ["面数", str(analysis["topology"]["面"])])
+
+        # 其余章节
+        _add_single_part_sections(doc, analysis, part_name="")
 
     # 保存文档
     output_filename = f"{basename}_分析报告.docx"

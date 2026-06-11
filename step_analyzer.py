@@ -1165,22 +1165,25 @@ def _generate_assembly_report(doc, shape, filename, basename):
     add_table_row(summary_table, ["整体体积", fmt_volume(overall_volume)])
 
 
-def generate_report(filepath, output_dir):
-    """生成Word分析报告（自动判断单零件/装配件）"""
+def generate_report(filepath, output_dir, is_assembly=False):
+    """生成Word分析报告
+
+    Args:
+        filepath: STEP文件路径
+        output_dir: 输出目录
+        is_assembly: 是否为装配件（True=多零件装配件，False=单零件）
+    """
     filename = os.path.basename(filepath)
     basename = os.path.splitext(filename)[0]
 
     print(f"正在分析: {filename}")
+    print(f"  分析模式: {'装配件' if is_assembly else '单零件'}")
 
     # 读取STEP文件
     shape = read_step_file(filepath)
     if shape is None:
         print(f"  错误: 无法读取文件 {filename}")
         return False
-
-    # 判断结构类型
-    structure_type, solid_count = classify_shape_structure(shape)
-    print(f"  结构类型: {structure_type}, Solid数量: {solid_count}")
 
     # 创建Word文档
     doc = Document()
@@ -1190,13 +1193,13 @@ def generate_report(filepath, output_dir):
     font.size = Pt(10.5)
 
     # 标题
-    if structure_type == "assembly":
+    if is_assembly:
         doc.add_heading(f"{basename} 装配件分析报告", level=0)
     else:
         doc.add_heading(f"{basename} 分析报告", level=0)
 
-    # 根据结构类型走不同路径
-    if structure_type == "assembly":
+    # 根据模式走不同路径
+    if is_assembly:
         _generate_assembly_report(doc, shape, filename, basename)
     else:
         # 单零件分析
@@ -1235,10 +1238,13 @@ def main():
     parser = argparse.ArgumentParser(description="STEP文件分析工具 - 解析STEP文件并生成Word分析报告")
     parser.add_argument("--input", required=True, help="STEP文件路径或包含STEP文件的目录")
     parser.add_argument("--output", help="输出目录，默认与输入相同")
+    parser.add_argument("--assembly", action="store_true", default=False,
+                        help="指定为装配件模式（多零件Compound），默认为单零件模式")
     args = parser.parse_args()
 
     input_path = args.input
     output_dir = args.output
+    is_assembly = args.assembly
 
     # 收集STEP文件
     step_files = []
@@ -1269,7 +1275,7 @@ def main():
     fail_count = 0
     for step_file in step_files:
         try:
-            result = generate_report(step_file, output_dir)
+            result = generate_report(step_file, output_dir, is_assembly=is_assembly)
             if result:
                 success_count += 1
             else:

@@ -1216,70 +1216,42 @@ def _add_single_part_sections(doc, analysis, part_name=""):
     doc.add_heading(f"切割加工指标{part_name}", level=1)
     metrics = calculate_cutting_metrics(analysis, bbox)
 
-    # 切口
-    doc.add_heading("切口", level=2)
-    if metrics["cuts"]:
-        total_cut_length = sum(c["perimeter"] for c in metrics["cuts"])
-        doc.add_paragraph(f"切口数量: {len(metrics['cuts'])} 个")
-        doc.add_paragraph(f"切口总长度: {total_cut_length:.3f} mm ({total_cut_length/10:.3f} cm)")
-
-        cut_table = doc.add_table(rows=1, cols=4)
-        cut_table.style = 'Table Grid'
-        cut_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        headers = ["序号", "类型", "周长(mm)", "备注"]
-        for i, h in enumerate(headers):
-            cut_table.rows[0].cells[i].text = h
-        for idx, c in enumerate(metrics["cuts"], 1):
-            add_table_row(cut_table, [
-                str(idx), c["type"], f"{c['perimeter']:.3f}", c.get("detail", "-")
-            ])
-    else:
-        doc.add_paragraph("切口数量: 0 个")
-
-    # 切孔
-    doc.add_heading("切孔", level=2)
-    if metrics["hole_cuts"]:
-        total_hole_length = sum(h["perimeter"] for h in metrics["hole_cuts"])
-        doc.add_paragraph(f"切孔数量: {len(metrics['hole_cuts'])} 个")
-        doc.add_paragraph(f"切孔总长度: {total_hole_length:.3f} mm ({total_hole_length/10:.3f} cm)")
-
-        hole_cut_table = doc.add_table(rows=1, cols=4)
-        hole_cut_table.style = 'Table Grid'
-        hole_cut_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        headers = ["序号", "类型", "周长(mm)", "备注"]
-        for i, h in enumerate(headers):
-            hole_cut_table.rows[0].cells[i].text = h
-        for idx, h in enumerate(metrics["hole_cuts"], 1):
-            add_table_row(hole_cut_table, [
-                str(idx), h["type"], f"{h['perimeter']:.3f}", h.get("detail", "-")
-            ])
-    else:
-        doc.add_paragraph("切孔数量: 0 个")
-
-    # 刺穿
-    doc.add_heading("刺穿", level=2)
-    doc.add_paragraph(f"刺穿次数: {metrics['piercing_count']} 次")
-
-    # 打标
-    doc.add_heading("打标", level=2)
-    if metrics["marking_length"] > 0:
-        doc.add_paragraph(f"打标长度: {metrics['marking_length']:.3f} mm ({metrics['marking_length']/10:.3f} cm)")
-    else:
-        doc.add_paragraph("打标长度: 未计算")
-
-    # 汇总
-    doc.add_heading("切割加工汇总", level=2)
-    summary_table = doc.add_table(rows=0, cols=2)
-    summary_table.style = 'Table Grid'
-    summary_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    add_table_row(summary_table, ["切口数量", f"{len(metrics['cuts'])} 个"])
     total_cut_len = sum(c["perimeter"] for c in metrics["cuts"])
-    add_table_row(summary_table, ["切口总长度", f"{total_cut_len:.3f} mm ({total_cut_len/10:.3f} cm)"])
-    add_table_row(summary_table, ["切孔数量", f"{len(metrics['hole_cuts'])} 个"])
     total_hole_len = sum(h["perimeter"] for h in metrics["hole_cuts"])
-    add_table_row(summary_table, ["切孔总长度", f"{total_hole_len:.3f} mm ({total_hole_len/10:.3f} cm)"])
-    add_table_row(summary_table, ["刺穿次数", f"{metrics['piercing_count']} 次"])
-    add_table_row(summary_table, ["打标长度", f"{metrics['marking_length']:.3f} mm ({metrics['marking_length']/10:.3f} cm)"])
+
+    metrics_table = doc.add_table(rows=1, cols=6)
+    metrics_table.style = 'Table Grid'
+    metrics_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    headers = ["指标", "切口", "切孔", "刺穿", "打标", "切割总长度"]
+    for i, h in enumerate(headers):
+        metrics_table.rows[0].cells[i].text = h
+
+    metrics_table.add_row()
+    row = metrics_table.rows[1]
+    row.cells[0].text = "数量"
+    row.cells[1].text = f"{len(metrics['cuts'])} 个"
+    row.cells[2].text = f"{len(metrics['hole_cuts'])} 个"
+    row.cells[3].text = f"{metrics['piercing_count']} 次"
+    row.cells[4].text = "-"
+    row.cells[5].text = "-"
+
+    metrics_table.add_row()
+    row = metrics_table.rows[2]
+    row.cells[0].text = "长度(mm)"
+    row.cells[1].text = f"{total_cut_len:.3f}"
+    row.cells[2].text = f"{total_hole_len:.3f}"
+    row.cells[3].text = "-"
+    row.cells[4].text = f"{metrics['marking_length']:.3f}"
+    row.cells[5].text = f"{total_cut_len + total_hole_len + metrics['marking_length']:.3f}"
+
+    metrics_table.add_row()
+    row = metrics_table.rows[3]
+    row.cells[0].text = "长度(cm)"
+    row.cells[1].text = f"{total_cut_len/10:.3f}"
+    row.cells[2].text = f"{total_hole_len/10:.3f}"
+    row.cells[3].text = "-"
+    row.cells[4].text = f"{metrics['marking_length']/10:.3f}"
+    row.cells[5].text = f"{(total_cut_len + total_hole_len + metrics['marking_length'])/10:.3f}"
 
 
 def _generate_assembly_report(doc, shape, filename, basename):

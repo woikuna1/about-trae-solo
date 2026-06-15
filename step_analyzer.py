@@ -172,16 +172,43 @@ def _calculate_wire_perimeter(wire):
 
 
 # ============================================================
-# 孔特征分析
+# 孔特征分析（基于平面扫描 + 位置去重）
 # ============================================================
+def _compute_wire_center(wire):
+    """计算Wire的几何中心点"""
+    props = GProp_GProps()
+    BRepGProp.LinearProperties_s(wire, props)
+    com = props.CentreOfMass()
+    return (com.X(), com.Y(), com.Z())
+
+
 def analyze_holes(shape):
-    """分析孔特征"""
+    """分析孔特征：扫描所有平面面，找与平面垂直的孔洞，按位置去重
+
+    核心思路：
+    1. 只扫描平面面（Plane），因为孔洞在平面上表现为内Wire
+    2. 不扫描圆柱面，避免同一孔洞被重复计数
+    3. 按内Wire的中心点位置去重（同一孔洞在内外壁各出现一次）
+    """
     holes = []
+    seen_centers = []  # 已见过的中心点，用于去重
+    dedup_tolerance = 1.0  # mm，去重容差
+
     exp = TopExp_Explorer(shape, TopAbs_FACE)
     while exp.More():
         face = TopoDS.Face_s(exp.Current())
         adaptor = BRepAdaptor_Surface(face)
         surf_type = adaptor.GetType()
+
+        # 只处理平面面
+        if surf_type != GeomAbs_Plane:
+            exp.Next()
+            continue
+
+        # 获取平面法向量
+        pln = adaptor.Plane()
+        face_normal = pln.Position().Direction()
+        normal_vec = (face_normal.X(), face_normal.Y(), face_normal.Z())
 
         # 统计面内的线数量
         wire_exp = TopExp_Explorer(face, TopAbs_WIRE)
@@ -190,83 +217,75 @@ def analyze_holes(shape):
             wire_count += 1
             wire_exp.Next()
 
-        # 孔面条件：圆柱面/圆锥面且有内线(wire_count > 1)，或平面有内线
-        is_hole_face = False
-        if surf_type in (GeomAbs_Cylinder, GeomAbs_Cone) and wire_count > 1:
-            is_hole_face = True
-        elif surf_type == GeomAbs_Plane and wire_count > 1:
-            is_hole_face = True
-
-        if not is_hole_face:
+        if wire_count <= 1:
             exp.Next()
             continue
 
-        # 分析每条内线的边类型
+        # 分析每条线（包括外Wire，因为外Wire也可能是孔边界）
         wire_exp = TopExp_Explorer(face, TopAbs_WIRE)
         wire_idx = 0
-        inner_wires_data = []  # [(edge_types_list, [edge_adaptor_list], wire_obj), ...]
         while wire_exp.More():
-            if wire_idx > 0:  # 内线
-                wire = wire_exp.Current()
-                edge_exp = TopExp_Explorer(wire, TopAbs_EDGE)
-                edge_types = []
-                edge_adaptors = []
-                while edge_exp.More():
-                    edge = TopoDS.Edge_s(edge_exp.Current())
-                    curve_adaptor = BRepAdaptor_Curve(edge)
-                    edge_types.append(curve_adaptor.GetType())
-                    edge_adaptors.append(curve_adaptor)
-                    edge_exp.Next()
-                inner_wires_data.append((edge_types, edge_adaptors, wire))
-            wire_idx += 1
-            wire_exp.Next()
+            wire = wire_exp.Current()
+            is_outer = (wire_idx == 0)
 
-        # 提取参数
-        if surf_type in (GeomAbs_Cylinder, GeomAbs_Cone):
-            # 圆柱/圆锥面孔面 - 整个面就是一个孔
-            hole_info = {"surface_type": surf_type}
-            if surf_type == GeomAbs_Cylinder:
-                cyl = adaptor.Cylinder()
-                hole_info["radius"] = cyl.Radius()
-                hole_info["diameter"] = cyl.Radius() * 2
-                loc = cyl.Location()
-                axis = cyl.Axis()
-                d = axis.Direction()
-                hole_info["axis_location"] = (loc.X(), loc.Y(), loc.Z())
-                hole_info["axis_direction"] = (d.X(), d.Y(), d.Z())
-            elif surf_type == GeomAbs_Cone:
-                cone = adaptor.Cone()
-                hole_info["radius"] = cone.RefRadius()
-                hole_info["diameter"] = cone.RefRadius() * 2
-                loc = cone.Location()
-                axis = cone.Axis()
-                d = axis.Direction()
-                hole_info["axis_location"] = (loc.X(), loc.Y(), loc.Z())
-                hole_info["axis_direction"] = (d.X(), d.Y(), d.Z())
-                hole_info["semi_angle"] = cone.SemiAngle()
+            # 分析Wire的边类型
+            edge_exp = TopExp_Explorer(wire, TopAbs_EDGE)
+            edge_types = []
+            edge_adaptors = []
+            while edge_exp.More():
+                edge = TopoDS.Edge_s(edge_exp.Current())
+                curve_adaptor = BRepAdaptor_Curve(edge)
+                edge_types.append(curve_adaptor.GetType())
+                edge_adaptors.append(curve_adaptor)
+                edge_exp.Next()
 
-            # 分类
-            all_edge_types = []
-            for edge_types, _, _ in inner_wires_data:
-                all_edge_types.extend(edge_types)
-            hole_info["classification"] = _classify_hole(
-                inner_wires_data, all_edge_types, surf_type
-            )
+            # 判断是否应作为孔处理：
+            # - 内Wire：始终是孔
+            # - 外Wire：如果由纯圆弧组成（无直线），则也是孔边界
+            is_hole_wire = False
+            if not is_outer:
+                is_hole_wire = True
+            else:
+                # 外Wire：检查是否全部是圆弧（无直线）
+                has_line = GeomAbs_Line in edge_types
+                has_circle = GeomAbs_Circle in edge_types
+                if has_circle and not has_line and len(edge_types) <= 4:
+                    is_hole_wire = True
 
-            # 计算周长（使用内Wire的实际长度）
-            perimeter = 0
-            for _, _, wire_obj in inner_wires_data:
-                perimeter += _calculate_wire_perimeter(wire_obj)
-            hole_info["perimeter"] = perimeter
+            if is_hole_wire:
+                # 计算Wire的中心点用于去重
+                center = _compute_wire_center(wire)
 
-            holes.append(hole_info)
+                # 去重：检查是否已有相近位置的孔
+                # 投影到面法向量的垂直平面上比较（忽略沿法向量方向的偏移）
+                is_duplicate = False
+                for sc, sn in seen_centers:
+                    dx = center[0] - sc[0]
+                    dy = center[1] - sc[1]
+                    dz = center[2] - sc[2]
+                    along_normal = dx * sn[0] + dy * sn[1] + dz * sn[2]
+                    perp_x = dx - along_normal * sn[0]
+                    perp_y = dy - along_normal * sn[1]
+                    perp_z = dz - along_normal * sn[2]
+                    perp_dist = math.sqrt(perp_x**2 + perp_y**2 + perp_z**2)
+                    if perp_dist < dedup_tolerance:
+                        is_duplicate = True
+                        break
 
-        elif surf_type == GeomAbs_Plane:
-            # 平面上的孔 - 每条内线代表一个孔
-            for edge_types, edge_adaptors, wire_obj in inner_wires_data:
-                hole_info = {"surface_type": surf_type}
+                if is_duplicate:
+                    wire_idx += 1
+                    wire_exp.Next()
+                    continue
 
-                # 从内线的圆边获取半径和轴信息
+                seen_centers.append((center, normal_vec))
+
+                hole_info = {
+                    "surface_type": surf_type,
+                    "face_normal": normal_vec,
+                    "center": center,
+                }
+
+                # 从圆边获取半径和轴信息
                 found_circle = False
                 for adaptor_c in edge_adaptors:
                     if adaptor_c.GetType() == GeomAbs_Circle:
@@ -280,14 +299,10 @@ def analyze_holes(shape):
                         found_circle = True
                         break
 
-                # 纯直线内Wire（矩形/方形槽）：计算长宽
+                # 纯直线Wire（矩形/方形槽）：计算长宽
                 if not found_circle and all(t == GeomAbs_Line for t in edge_types):
-                    # 获取每条边的长度
-                    from OCP.BRepGProp import BRepGProp as BRepGProp2
-                    from OCP.GProp import GProp_GProps as GProp_GProps2
                     edge_lengths = []
                     for adaptor_c in edge_adaptors:
-                        # 获取边的首尾点距离
                         first_param = adaptor_c.FirstParameter()
                         last_param = adaptor_c.LastParameter()
                         p1 = adaptor_c.Value(first_param)
@@ -296,7 +311,6 @@ def analyze_holes(shape):
                             (p2.X()-p1.X())**2 + (p2.Y()-p1.Y())**2 + (p2.Z()-p1.Z())**2
                         )
                         edge_lengths.append(length)
-                    # 去重排序，取两个不同的长度作为长和宽
                     unique_lengths = sorted(set(round(l, 3) for l in edge_lengths))
                     if len(unique_lengths) >= 2:
                         hole_info["slot_length"] = max(unique_lengths)
@@ -313,10 +327,13 @@ def analyze_holes(shape):
                     [(edge_types, edge_adaptors)], edge_types, surf_type
                 )
 
-                # 计算周长（使用Wire的实际长度）
-                hole_info["perimeter"] = _calculate_wire_perimeter(wire_obj)
+                # 计算周长
+                hole_info["perimeter"] = _calculate_wire_perimeter(wire)
 
                 holes.append(hole_info)
+
+            wire_idx += 1
+            wire_exp.Next()
 
         exp.Next()
 
@@ -697,17 +714,11 @@ def calculate_cutting_metrics(analysis, bbox=None):
             })
 
     # ---- 切孔计算 ----
-    # 过滤掉管/方通内腔开口（槽长>=管长50%的矩形槽）
+    # 新方法已通过平面扫描+位置去重，无需再过滤内腔开口
     hole_cuts = []
     for hole in holes:
         classification = hole["classification"]
         perimeter = hole.get("perimeter", 0)
-
-        # 过滤内腔开口
-        if classification == "规则孔（矩形/方形槽）":
-            slot_length = hole.get("slot_length", 0)
-            if tube_length > 0 and slot_length >= tube_length * 0.5:
-                continue
 
         # 如果没有精确周长，从几何参数推算
         if perimeter <= 0:

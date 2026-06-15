@@ -1,0 +1,64 @@
+<h2>阶段三：场景生成 — 核心工具与流程</h2>
+<p class="subtitle">场景是角色活动的舞台，风格统一是关键</p>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px;">
+
+  <div style="background:#1a1a2e;border-radius:12px;padding:16px;border-top:3px solid #4facfe;">
+    <h3 style="margin:0 0 8px 0;color:#4facfe;">背景图生成</h3>
+    <p style="color:#ccc;font-size:13px;line-height:1.6;">
+      用SD/Midjourney生成场景背景图。<br>
+      关键：背景中<strong>不要包含角色</strong>，角色单独生成后合成。<br>
+      Prompt示例：<code style="background:#2a2a4a;padding:2px 6px;border-radius:4px;">anime background, classroom, afternoon sunlight, detailed, no humans</code>
+    </p>
+  </div>
+
+  <div style="background:#1a1a2e;border-radius:12px;padding:16px;border-top:3px solid #00f2fe;">
+    <h3 style="margin:0 0 8px 0;color:#00f2fe;">场景风格统一</h3>
+    <p style="color:#ccc;font-size:13px;line-height:1.6;">
+      使用同一Checkpoint + 风格LoRA<br>
+      在Prompt中固定风格关键词<br>
+      使用Seed锁定相似构图<br>
+      制作"风格参考图"作为Img2Img输入
+    </p>
+  </div>
+
+  <div style="background:#1a1a2e;border-radius:12px;padding:16px;border-top:3px solid #43e97b;">
+    <h3 style="margin:0 0 8px 0;color:#43e97b;">多角度场景</h3>
+    <p style="color:#ccc;font-size:13px;line-height:1.6;">
+      同一场景需要多个视角：<br>
+      • 全景（Establishing Shot）<br>
+      • 中景（角色互动）<br>
+      • 特写（情绪/细节）<br>
+      用ControlNet Depth保持空间一致性
+    </p>
+  </div>
+
+  <div style="background:#1a1a2e;border-radius:12px;padding:16px;border-top:3px solid #38f9d7;">
+    <h3 style="margin:0 0 8px 0;color:#38f9d7;">场景分层</h3>
+    <p style="color:#ccc;font-size:13px;line-height:1.6;">
+      将场景拆分为前景/中景/远景层<br>
+      方便后期添加视差动画效果<br>
+      用SD的Inpainting分别生成各层<br>
+      或用Depth2Image自动分层
+    </p>
+  </div>
+
+</div>
+
+<div style="margin-top:24px;padding:16px;background:#16213e;border-radius:12px;border-left:4px solid #4facfe;">
+  <h3 style="margin:0 0 8px 0;color:#4facfe;">场景风格关键词参考</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">
+    <div style="background:#2a2a4a;border-radius:8px;padding:8px;text-align:center;">
+      <div style="color:#f093fb;font-weight:600;font-size:13px;">日系精致</div>
+      <div style="color:#999;font-size:12px;">makoto shinkai style<br>kyoani style<br>ufotable style</div>
+    </div>
+    <div style="background:#2a2a4a;border-radius:8px;padding:8px;text-align:center;">
+      <div style="color:#fa709a;font-weight:600;font-size:13px;">国风/国漫</div>
+      <div style="color:#999;font-size:12px;">chinese ink painting<br>watercolor style<br>oriental fantasy</div>
+    </div>
+    <div style="background:#2a2a4a;border-radius:8px;padding:8px;text-align:center;">
+      <div style="color:#fee140;font-weight:600;font-size:13px;">吉卜力</div>
+      <div style="color:#999;font-size:12px;">studio ghibli style<br>ghibli background<br>miyazaki style</div>
+    </div>
+  </div>
+</div>

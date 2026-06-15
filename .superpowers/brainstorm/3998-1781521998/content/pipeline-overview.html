@@ -1,0 +1,51 @@
+<h2>AI动漫制作 — 完整管线概览</h2>
+<p class="subtitle">从创意到成片，AI动漫制作涉及以下核心阶段</p>
+
+<div style="display:flex;flex-direction:column;gap:16px;margin-top:24px;">
+
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:12px;padding:12px 20px;min-width:140px;text-align:center;font-weight:600;">1. 剧本/分镜</div>
+    <div style="flex:1;background:#1a1a2e;border-radius:12px;padding:12px 16px;color:#ccc;font-size:14px;">
+      AI辅助编剧 → 分镜脚本生成 → 场景描述 → Prompt工程
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="background:linear-gradient(135deg,#f093fb,#f5576c);color:white;border-radius:12px;padding:12px 20px;min-width:140px;text-align:center;font-weight:600;">2. 角色设计</div>
+    <div style="flex:1;background:#1a1a2e;border-radius:12px;padding:12px 16px;color:#ccc;font-size:14px;">
+      角色立绘生成 → LoRA训练 → 角色一致性保持 → 表情/姿态变体
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="background:linear-gradient(135deg,#4facfe,#00f2fe);color:white;border-radius:12px;padding:12px 20px;min-width:140px;text-align:center;font-weight:600;">3. 场景生成</div>
+    <div style="flex:1;background:#1a1a2e;border-radius:12px;padding:12px 16px;color:#ccc;font-size:14px;">
+      背景图生成 → 场景风格统一 → 多角度场景 → 场景分层
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="background:linear-gradient(135deg,#43e97b,#38f9d7);color:white;border-radius:12px;padding:12px 20px;min-width:140px;text-align:center;font-weight:600;">4. 动画生成</div>
+    <div style="flex:1;background:#1a1a2e;border-radius:12px;padding:12px 16px;color:#ccc;font-size:14px;">
+      图生视频(I2V) → 动作控制 → 口型同步 → 镜头运动
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="background:linear-gradient(135deg,#fa709a,#fee140);color:white;border-radius:12px;padding:12px 20px;min-width:140px;text-align:center;font-weight:600;">5. 后期合成</div>
+    <div style="flex:1;background:#1a1a2e;border-radius:12px;padding:12px 16px;color:#ccc;font-size:14px;">
+      配音/音效 → 字幕 → 特效 → 剪辑拼接 → 调色
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:32px;padding:16px;background:#16213e;border-radius:12px;border-left:4px solid #667eea;">
+  <h3 style="margin:0 0 8px 0;color:#667eea;">关键挑战</h3>
+  <ul style="margin:0;color:#ccc;font-size:14px;line-height:1.8;">
+    <li><strong>角色一致性</strong> — 让同一个角色在不同场景/姿态中保持外观一致</li>
+    <li><strong>风格统一</strong> — 全片保持统一的美术风格</li>
+    <li><strong>动作可控</strong> — 精确控制角色动作和镜头运动</li>
+    <li><strong>时序连贯</strong> — 相邻帧/镜头之间的视觉连贯性</li>
+  </ul>
+</div>

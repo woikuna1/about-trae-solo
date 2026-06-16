@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>1.1 Stable Diffusion 详解</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      padding: 32px;
+      line-height: 1.8;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    h2 { color: #ffffff; font-size: 24px; margin-bottom: 8px; }
+    .subtitle { color: #888; font-size: 14px; margin-bottom: 24px; }
+    h3 { color: #667eea; font-size: 18px; margin: 24px 0 12px 0; }
+
+    .card {
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card-blue { border-left: 4px solid #667eea; }
+    .card-pink { border-left: 4px solid #f093fb; }
+    .card-green { border-left: 4px solid #43e97b; }
+    .card-yellow { border-left: 4px solid #fee140; }
+
+    .analogy {
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px 0;
+      border: 1px solid #2a2a4a;
+    }
+    .analogy-title { color: #f093fb; font-weight: 600; margin-bottom: 8px; }
+
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 0;
+      flex-wrap: wrap;
+    }
+    .flow-box {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .flow-arrow { color: #667eea; font-size: 20px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    th {
+      background: #2a2a4a;
+      color: #667eea;
+      padding: 10px 12px;
+      text-align: left;
+      border-radius: 6px 6px 0 0;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #2a2a4a;
+      color: #ccc;
+    }
+    tr:hover td { background: #1a1a2e; }
+
+    .recommend {
+      background: linear-gradient(135deg, #43e97b, #38f9d7);
+      color: #0f0f1a;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-block;
+    }
+    .tag {
+      background: #2a2a4a;
+      color: #999;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 12px;
+      display: inline-block;
+      margin: 2px;
+    }
+    code {
+      background: #2a2a4a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #4facfe;
+    }
+    ul { padding-left: 20px; }
+    li { margin: 4px 0; color: #ccc; }
+    strong { color: #fff; }
+  </style>
+</head>
+<body>
+
+  <h2>1.1 Stable Diffusion 详解</h2>
+  <p class="subtitle">AI动漫制作的基石工具</p>
+
+  <!-- 是什么 -->
+  <h3>SD 是什么？</h3>
+  <div class="card card-blue">
+    <p><strong>Stable Diffusion（稳定扩散）</strong>是一个<strong>开源的AI图像生成模型</strong>，由Stability AI公司开发。</p>
+    <p style="margin-top:8px;">简单说：你给它一段<strong>文字描述</strong>，它就能<strong>生成对应的图片</strong>。这个过程叫做<strong>文生图（Text-to-Image, T2I）</strong>。</p>
+  </div>
+
+  <div class="analogy">
+    <div class="analogy-title">类比理解</div>
+    <p>想象你请了一个画师，你告诉他"画一个蓝发少女站在夕阳下的海边"，他就画出来。SD就是这个画师——只不过它是AI，速度极快（几秒钟），而且可以无限次修改。</p>
+  </div>
+
+  <!-- 怎么工作 -->
+  <h3>它是怎么工作的？</h3>
+  <div class="card card-pink">
+    <p>SD的核心原理叫<strong>扩散模型（Diffusion Model）</strong>，分两个方向：</p>
+    <div class="flow">
+      <div class="flow-box">清晰图片</div>
+      <div class="flow-arrow">→ 加噪 →</div>
+      <div class="flow-box">纯噪声</div>
+    </div>
+    <p style="color:#888;font-size:13px;">↑ 这是"正向扩散"——训练时用，让模型学习噪声是怎么加的</p>
+    <div class="flow" style="margin-top:12px;">
+      <div class="flow-box">纯噪声</div>
+      <div class="flow-arrow">→ 去噪 × 20~30步 →</div>
+      <div class="flow-box">清晰图片</div>
+    </div>
+    <p style="color:#888;font-size:13px;">↑ 这是"逆向扩散"——生成时用，模型学会了如何从噪声中还原图片</p>
+    <p style="margin-top:12px;">你的<strong>文字描述</strong>就像导航，告诉模型"往哪个方向去噪"——最终得到你想要的画面。</p>
+  </div>
+
+  <!-- 作用 -->
+  <h3>SD 在AI动漫中的作用</h3>
+  <div class="card card-green">
+    <p>在AI动漫制作流程中，SD承担了<strong>所有静态图像生成</strong>的工作：</p>
+    <ul>
+      <li><strong>角色立绘</strong> — 生成角色的外观设计图</li>
+      <li><strong>场景背景</strong> — 生成各种场景的背景图</li>
+      <li><strong>分镜画面</strong> — 按分镜脚本逐镜头生成关键帧</li>
+      <li><strong>角色变体</strong> — 同一角色的不同表情、姿态、服装</li>
+      <li><strong>风格统一</strong> — 通过LoRA/Checkpoint控制全片画风</li>
+      <li><strong>动画基础帧</strong> — 为视频生成提供起始画面</li>
+    </ul>
+  </div>
+
+  <!-- 版本选择 -->
+  <h3>版本怎么选？</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>版本</th>
+        <th>分辨率</th>
+        <th>特点</th>
+        <th>动漫生态</th>
+        <th>推荐度</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>SD 1.5</strong></td>
+        <td>512×512</td>
+        <td>最老版本，插件最多，资源最丰富</td>
+        <td>极丰富</td>
+        <td><span class="tag">入门可用</span></td>
+      </tr>
+      <tr>
+        <td><strong>SDXL</strong></td>
+        <td>1024×1024</td>
+        <td>质量显著提升，生态已成熟</td>
+        <td>丰富</td>
+        <td><span class="recommend">推荐首选</span></td>
+      </tr>
+      <tr>
+        <td><strong>SD 3.0/3.5</strong></td>
+        <td>1024×1024</td>
+        <td>新架构，质量好但生态不成熟</td>
+        <td>较少</td>
+        <td><span class="tag">观望</span></td>
+      </tr>
+      <tr>
+        <td><strong>Flux</strong></td>
+        <td>可变</td>
+        <td>黑森林实验室出品，质量极高</td>
+        <td>快速增长中</td>
+        <td><span class="tag">进阶选择</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="analogy">
+    <div class="analogy-title">版本选择建议</div>
+    <p><strong>零基础入门 → SDXL</strong></p>
+    <ul>
+      <li>质量够高，不需要像1.5那样大量后期修补</li>
+      <li>动漫模型生态已经足够丰富（Animagine XL、Counterfeit XL等）</li>
+      <li>社区教程和资源多，遇到问题容易找到答案</li>
+    </ul>
+    <p style="margin-top:12px;"><strong>为什么不是1.5？</strong> 虽然1.5插件最多，但画质明显落后，512分辨率太小，做动漫需要大量放大和修补，反而更麻烦。</p>
+    <p style="margin-top:8px;"><strong>为什么不是3.0/Flux？</strong> 质量虽好，但动漫相关的LoRA、ControlNet适配等生态还不完善，做动漫时可选工具少。</p>
+  </div>
+
+</body>
+</html>

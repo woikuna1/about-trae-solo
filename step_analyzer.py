@@ -619,6 +619,115 @@ def analyze_wall_thickness(shape, tubes):
 
 
 # ============================================================
+# 端部凹槽检测
+# ============================================================
+def analyze_end_grooves(shape, tubes=None, sq_cross=None, bbox=None):
+    """检测管/方通端部的半圆凹槽
+
+    凹槽特征：圆柱面，轴向与管轴垂直，位于端部附近
+    """
+    grooves = []
+
+    # 确定管轴方向和端部位置
+    tube_axis = None
+    tube_length = 0
+    end_positions = []
+
+    if tubes:
+        # 圆管：轴方向
+        tube_axis = tubes[0]["axis_direction"]
+        tube_length = tubes[0]["length"]
+    elif bbox:
+        # 从包围盒推断
+        dims = [bbox["x_size"], bbox["y_size"], bbox["z_size"]]
+        max_idx = dims.index(max(dims))
+        axis_vecs = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        tube_axis = axis_vecs[max_idx]
+        tube_length = max(dims)
+
+    if not tube_axis or tube_length <= 0:
+        return grooves
+
+    # 确定端部位置
+    if bbox:
+        if tube_axis == (1, 0, 0):
+            end_positions = [bbox["x_min"], bbox["x_max"]]
+        elif tube_axis == (0, 1, 0):
+            end_positions = [bbox["y_min"], bbox["y_max"]]
+        else:
+            end_positions = [bbox["z_min"], bbox["z_max"]]
+
+    end_tolerance = tube_length * 0.05  # 5%容差
+
+    # 扫描所有圆柱面
+    exp = TopExp_Explorer(shape, TopAbs_FACE)
+    while exp.More():
+        face = TopoDS.Face_s(exp.Current())
+        adaptor = BRepAdaptor_Surface(face)
+        surf_type = adaptor.GetType()
+
+        if surf_type != GeomAbs_Cylinder:
+            exp.Next()
+            continue
+
+        cyl = adaptor.Cylinder()
+        d = cyl.Position().Direction()
+        r = cyl.Radius()
+        loc = cyl.Location()
+
+        # 检查轴向是否与管轴垂直
+        dot = abs(d.X() * tube_axis[0] + d.Y() * tube_axis[1] + d.Z() * tube_axis[2])
+        if dot > 0.1:  # 不垂直，跳过
+            exp.Next()
+            continue
+
+        # 检查是否在端部附近
+        if tube_axis == (1, 0, 0):
+            axial_pos = loc.X()
+        elif tube_axis == (0, 1, 0):
+            axial_pos = loc.Y()
+        else:
+            axial_pos = loc.Z()
+
+        near_end = None
+        for ep in end_positions:
+            if abs(axial_pos - ep) < end_tolerance:
+                near_end = ep
+                break
+
+        if near_end is None:
+            exp.Next()
+            continue
+
+        # 计算凹槽周长（半圆弧长 = π × R）
+        perimeter = math.pi * r
+
+        # 判断端部位置名称
+        if tube_axis == (1, 0, 0):
+            end_name = "左端" if near_end == end_positions[0] else "右端"
+        elif tube_axis == (0, 1, 0):
+            end_name = "底端" if near_end == end_positions[0] else "顶端"
+        else:
+            end_name = "后端" if near_end == end_positions[0] else "前端"
+
+        groove_info = {
+            "radius": r,
+            "diameter": r * 2,
+            "perimeter": perimeter,
+            "axis_direction": (d.X(), d.Y(), d.Z()),
+            "location": (loc.X(), loc.Y(), loc.Z()),
+            "end_name": end_name,
+        }
+        grooves.append(groove_info)
+
+        exp.Next()
+
+    # 不去重——每个圆柱面就是一个独立的凹槽
+    # （同端同位置的多个面代表凹槽的不同部分，不应合并）
+    return grooves
+
+
+# ============================================================
 # 模型类型自动检测
 # ============================================================
 def detect_model_type(tubes, square_tube_pairs, square_tube_cross):
@@ -634,20 +743,22 @@ def detect_model_type(tubes, square_tube_pairs, square_tube_cross):
 # 切割加工指标计算
 # ============================================================
 def calculate_cutting_metrics(analysis, bbox=None):
-    """计算切割加工指标：切口、切孔、刺穿、打标
+    """计算切割加工指标：切口、切孔、凹槽、刺穿、打标
 
     概念定义：
     - 切口：管/方通的端部切断，每个自由端算一个切口
-    - 切孔：管壁上开的孔洞
-    - 刺穿：每个切孔前需要先刺穿材料，次数=切孔数
+    - 切孔：管壁上开的孔洞（不含内腔开口和端部凹槽）
+    - 凹槽：端部的半圆形凹槽
+    - 刺穿：每个切孔+凹槽前需要先刺穿材料
     - 打标：整个图形的周长（截面轮廓周长）
     """
     model_type = analysis["model_type"]
     tubes = analysis["tubes"]
     sq_cross = analysis["sq_cross"]
     holes = analysis["holes"]
+    end_grooves = analysis.get("end_grooves", [])
 
-    # 获取管/方通的主长度（最长维度），用于过滤内腔开口
+    # 获取管/方通的主长度，用于过滤内腔开口
     tube_length = 0
     if tubes:
         tube_length = max(t["length"] for t in tubes)
@@ -670,20 +781,16 @@ def calculate_cutting_metrics(analysis, bbox=None):
                 "detail": f"外径={tube['outer_diameter']:.3f}mm",
             })
     elif model_type == "方通结构":
-        # 找到真正的截面（两个较小维度）
         if sq_cross:
-            # 找不包含管长维度的截面
             real_cross_sections = []
             for sq in sq_cross:
                 dim1 = sq["cross_section_dim1"]
                 dim2 = sq["cross_section_dim2"]
-                # 排除包含管长维度的截面
                 if tube_length > 0 and (dim1 >= tube_length * 0.5 or dim2 >= tube_length * 0.5):
                     continue
                 real_cross_sections.append((dim1, dim2))
 
             if real_cross_sections:
-                # 使用最小的截面（最可能是真实截面）
                 dim1, dim2 = real_cross_sections[0]
                 perimeter = 2 * (dim1 + dim2)
                 cuts.append({
@@ -697,7 +804,6 @@ def calculate_cutting_metrics(analysis, bbox=None):
                     "detail": f"截面={dim1:.3f}×{dim2:.3f}mm",
                 })
 
-        # 如果没找到截面，从包围盒推算
         if not cuts and bbox:
             dims = sorted([bbox["x_size"], bbox["y_size"], bbox["z_size"]])
             cross_dim1, cross_dim2 = dims[0], dims[1]
@@ -714,13 +820,18 @@ def calculate_cutting_metrics(analysis, bbox=None):
             })
 
     # ---- 切孔计算 ----
-    # 新方法已通过平面扫描+位置去重，无需再过滤内腔开口
+    # 过滤掉方通内腔开口（矩形槽长≈管长）
     hole_cuts = []
     for hole in holes:
         classification = hole["classification"]
         perimeter = hole.get("perimeter", 0)
 
-        # 如果没有精确周长，从几何参数推算
+        # 过滤内腔开口：矩形槽的槽长>=管长的50%
+        if classification == "规则孔（矩形/方形槽）":
+            slot_length = hole.get("slot_length", 0)
+            if tube_length > 0 and slot_length >= tube_length * 0.5:
+                continue
+
         if perimeter <= 0:
             if hole.get("diameter"):
                 perimeter = math.pi * hole["diameter"]
@@ -733,8 +844,17 @@ def calculate_cutting_metrics(analysis, bbox=None):
             "detail": _hole_detail_str(hole),
         })
 
+    # ---- 凹槽计算 ----
+    groove_cuts = []
+    for groove in end_grooves:
+        groove_cuts.append({
+            "perimeter": groove["perimeter"],
+            "type": f"端部半圆凹槽（{groove['end_name']}）",
+            "detail": f"R={groove['radius']:.3f}mm",
+        })
+
     # ---- 刺穿 ----
-    piercing_count = len(hole_cuts)
+    piercing_count = len(hole_cuts) + len(groove_cuts)
 
     # ---- 打标长度 ----
     marking_length = 0
@@ -756,6 +876,7 @@ def calculate_cutting_metrics(analysis, bbox=None):
     return {
         "cuts": cuts,
         "hole_cuts": hole_cuts,
+        "groove_cuts": groove_cuts,
         "piercing_count": piercing_count,
         "marking_length": marking_length,
     }
@@ -1022,6 +1143,7 @@ def _analyze_single_solid(solid):
     sq_pairs, sq_cross = analyze_square_tube_structures(solid)
     wall_info = analyze_wall_thickness(solid, tubes)
     model_type = detect_model_type(tubes, sq_pairs, sq_cross)
+    end_grooves = analyze_end_grooves(solid, tubes=tubes, sq_cross=sq_cross, bbox=bbox)
 
     return {
         "topology": topology,
@@ -1037,6 +1159,7 @@ def _analyze_single_solid(solid):
         "sq_cross": sq_cross,
         "wall_info": wall_info,
         "model_type": model_type,
+        "end_grooves": end_grooves,
     }
 
 
@@ -1229,11 +1352,13 @@ def _add_single_part_sections(doc, analysis, part_name=""):
 
     total_cut_len = sum(c["perimeter"] for c in metrics["cuts"])
     total_hole_len = sum(h["perimeter"] for h in metrics["hole_cuts"])
+    total_groove_len = sum(g["perimeter"] for g in metrics["groove_cuts"])
+    total_all = total_cut_len + total_hole_len + total_groove_len + metrics["marking_length"]
 
-    metrics_table = doc.add_table(rows=1, cols=6)
+    metrics_table = doc.add_table(rows=1, cols=7)
     metrics_table.style = 'Table Grid'
     metrics_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    headers = ["指标", "切口", "切孔", "刺穿", "打标", "切割总长度"]
+    headers = ["指标", "切口", "切孔", "凹槽", "刺穿", "打标", "切割总长度"]
     for i, h in enumerate(headers):
         metrics_table.rows[0].cells[i].text = h
 
@@ -1242,27 +1367,30 @@ def _add_single_part_sections(doc, analysis, part_name=""):
     row.cells[0].text = "数量"
     row.cells[1].text = f"{len(metrics['cuts'])} 个"
     row.cells[2].text = f"{len(metrics['hole_cuts'])} 个"
-    row.cells[3].text = f"{metrics['piercing_count']} 次"
-    row.cells[4].text = "-"
+    row.cells[3].text = f"{len(metrics['groove_cuts'])} 个"
+    row.cells[4].text = f"{metrics['piercing_count']} 次"
     row.cells[5].text = "-"
+    row.cells[6].text = "-"
 
     metrics_table.add_row()
     row = metrics_table.rows[2]
     row.cells[0].text = "长度(mm)"
     row.cells[1].text = f"{total_cut_len:.3f}"
     row.cells[2].text = f"{total_hole_len:.3f}"
-    row.cells[3].text = "-"
-    row.cells[4].text = f"{metrics['marking_length']:.3f}"
-    row.cells[5].text = f"{total_cut_len + total_hole_len + metrics['marking_length']:.3f}"
+    row.cells[3].text = f"{total_groove_len:.3f}"
+    row.cells[4].text = "-"
+    row.cells[5].text = f"{metrics['marking_length']:.3f}"
+    row.cells[6].text = f"{total_all:.3f}"
 
     metrics_table.add_row()
     row = metrics_table.rows[3]
     row.cells[0].text = "长度(cm)"
     row.cells[1].text = f"{total_cut_len/10:.3f}"
     row.cells[2].text = f"{total_hole_len/10:.3f}"
-    row.cells[3].text = "-"
-    row.cells[4].text = f"{metrics['marking_length']/10:.3f}"
-    row.cells[5].text = f"{(total_cut_len + total_hole_len + metrics['marking_length'])/10:.3f}"
+    row.cells[3].text = f"{total_groove_len/10:.3f}"
+    row.cells[4].text = "-"
+    row.cells[5].text = f"{metrics['marking_length']/10:.3f}"
+    row.cells[6].text = f"{total_all/10:.3f}"
 
 
 def _generate_assembly_report(doc, shape, filename, basename):

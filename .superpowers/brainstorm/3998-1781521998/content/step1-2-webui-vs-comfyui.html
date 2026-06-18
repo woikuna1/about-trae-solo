@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>1.2 WebUI vs ComfyUI 详解</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      padding: 32px;
+      line-height: 1.8;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    h2 { color: #ffffff; font-size: 24px; margin-bottom: 8px; }
+    .subtitle { color: #888; font-size: 14px; margin-bottom: 24px; }
+    h3 { color: #667eea; font-size: 18px; margin: 28px 0 12px 0; }
+
+    .card {
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card-blue { border-left: 4px solid #667eea; }
+    .card-pink { border-left: 4px solid #f093fb; }
+    .card-green { border-left: 4px solid #43e97b; }
+    .card-yellow { border-left: 4px solid #fee140; }
+    .card-orange { border-left: 4px solid #fa709a; }
+
+    .analogy {
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px 0;
+      border: 1px solid #2a2a4a;
+    }
+    .analogy-title { color: #f093fb; font-weight: 600; margin-bottom: 8px; }
+
+    .core-idea {
+      background: linear-gradient(135deg, #667eea22, #764ba222);
+      border: 2px solid #667eea;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px 0;
+      text-align: center;
+    }
+    .core-idea p { font-size: 18px; color: #fff; font-weight: 600; }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 16px 0;
+    }
+    .compare-box {
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .compare-box h4 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #2a2a4a;
+    }
+    .compare-box.a1111 h4 { color: #4facfe; }
+    .compare-box.comfyui h4 { color: #43e97b; }
+    .compare-box ul { padding-left: 18px; }
+    .compare-box li { margin: 6px 0; color: #ccc; font-size: 14px; }
+
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+    .flow-box {
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .flow-box.purple { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .flow-box.blue { background: linear-gradient(135deg, #4facfe, #00f2fe); color: #0f0f1a; }
+    .flow-box.green { background: linear-gradient(135deg, #43e97b, #38f9d7); color: #0f0f1a; }
+    .flow-arrow { color: #667eea; font-size: 20px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    th {
+      background: #2a2a4a;
+      color: #667eea;
+      padding: 10px 12px;
+      text-align: left;
+      border-radius: 6px 6px 0 0;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #2a2a4a;
+      color: #ccc;
+    }
+    tr:hover td { background: #1a1a2e; }
+    .recommend {
+      background: linear-gradient(135deg, #43e97b, #38f9d7);
+      color: #0f0f1a;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-block;
+    }
+    code {
+      background: #2a2a4a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #4facfe;
+    }
+    ul { padding-left: 20px; }
+    li { margin: 4px 0; color: #ccc; }
+    strong { color: #fff; }
+  </style>
+</head>
+<body>
+
+  <h2>1.2 WebUI vs ComfyUI 详解</h2>
+  <p class="subtitle">它们不是两个平台，而是同一个引擎的两种"方向盘"</p>
+
+  <!-- 核心概念 -->
+  <div class="core-idea">
+    <p>Stable Diffusion = 引擎（发动机）</p>
+    <p style="font-size:14px;color:#888;margin-top:8px;font-weight:400;">WebUI 和 ComfyUI 都是给这个引擎装的"驾驶舱"，只是操控方式不同</p>
+  </div>
+
+  <div class="analogy">
+    <div class="analogy-title">类比理解</div>
+    <p>想象SD是一辆车的<strong>发动机</strong>。发动机本身你没法直接操作，你需要一个<strong>驾驶舱</strong>来控制它。</p>
+    <ul style="margin-top:8px;">
+      <li><strong>WebUI（A1111）</strong> = 自动挡轿车 — 方向盘、油门、刹车，简单直观</li>
+      <li><strong>ComfyUI</strong> = 手动挡赛车 — 可以拆装零件、调校每个参数，灵活但需要学习</li>
+    </ul>
+    <p style="margin-top:8px;">它们装的是<strong>同一台发动机</strong>，跑的是<strong>同一条路</strong>，只是操控方式不同。</p>
+  </div>
+
+  <!-- 它们的关系 -->
+  <h3>它们的关系</h3>
+  <div class="card card-blue">
+    <div class="flow" style="justify-content:center;">
+      <div class="flow-box purple">Stable Diffusion<br>（AI绘图引擎）</div>
+    </div>
+    <p style="text-align:center;color:#888;margin:12px 0;">↑ 这是底层核心，两者共用</p>
+    <div class="flow" style="justify-content:center;">
+      <div class="flow-box blue">WebUI (A1111)<br>表单式界面</div>
+      <div style="width:40px;"></div>
+      <div class="flow-box green">ComfyUI<br>节点式界面</div>
+    </div>
+    <p style="text-align:center;color:#888;margin-top:12px;">↑ 两种不同的操控方式，都调用同一个SD引擎</p>
+  </div>
+
+  <!-- 详细对比 -->
+  <h3>详细对比</h3>
+  <div class="compare">
+    <div class="compare-box a1111">
+      <h4>WebUI (Automatic1111)</h4>
+      <p style="color:#888;font-size:13px;margin-bottom:8px;">表单式 — 像填表格一样操作</p>
+      <ul>
+        <li>填Prompt → 选参数 → 点生成 → 出图</li>
+        <li>界面固定，功能排好了</li>
+        <li>插件安装后自动出现在菜单里</li>
+        <li>适合理解SD的基本概念</li>
+        <li>简单任务效率高</li>
+      </ul>
+    </div>
+    <div class="compare-box comfyui">
+      <h4>ComfyUI</h4>
+      <p style="color:#888;font-size:13px;margin-bottom:8px;">节点式 — 像搭积木/画流程图</p>
+      <ul>
+        <li>拖拽节点 → 连线 → 组成工作流</li>
+        <li>界面自由，想怎么搭怎么搭</li>
+        <li>每个功能是一个"积木块"</li>
+        <li>适合搭建复杂自动化流程</li>
+        <li>做动漫的终极选择</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 功能对比表 -->
+  <table>
+    <thead>
+      <tr>
+        <th>对比项</th>
+        <th>WebUI (A1111)</th>
+        <th>ComfyUI</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>上手难度</strong></td>
+        <td>低，填表即用</td>
+        <td>高，需要理解节点概念</td>
+      </tr>
+      <tr>
+        <td><strong>操作方式</strong></td>
+        <td>表单填写</td>
+        <td>拖拽连线</td>
+      </tr>
+      <tr>
+        <td><strong>工作流复用</strong></td>
+        <td>不支持</td>
+        <td>支持保存/分享/导入</td>
+      </tr>
+      <tr>
+        <td><strong>复杂流程</strong></td>
+        <td>难以串联多步骤</td>
+        <td>轻松串联任意步骤</td>
+      </tr>
+      <tr>
+        <td><strong>批处理</strong></td>
+        <td>有限</td>
+        <td>强大</td>
+      </tr>
+      <tr>
+        <td><strong>AnimateDiff支持</strong></td>
+        <td>基础</td>
+        <td>完整</td>
+      </tr>
+      <tr>
+        <td><strong>社区模板</strong></td>
+        <td>插件</td>
+        <td>工作流JSON</td>
+      </tr>
+      <tr>
+        <td><strong>显存效率</strong></td>
+        <td>一般</td>
+        <td>更优</td>
+      </tr>
+      <tr>
+        <td><strong>动漫制作适配</strong></td>
+        <td>简单出图够用</td>
+        <td><span class="recommend">全流程首选</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 为什么做动漫必须用ComfyUI -->
+  <h3>为什么做动漫最终必须用ComfyUI？</h3>
+  <div class="card card-green">
+    <p>做动漫需要把多个步骤<strong>串联</strong>起来：</p>
+    <div class="flow" style="margin:16px 0;">
+      <div class="flow-box purple">加载角色LoRA</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">加载ControlNet</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">IP-Adapter</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">生成关键帧</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">AnimateDiff</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box green">输出视频</div>
+    </div>
+    <p>这种多步骤串联在WebUI中几乎无法实现，但在ComfyUI中就是<strong>画几条连线</strong>的事。</p>
+  </div>
+
+  <!-- 学习路径 -->
+  <h3>推荐学习路径</h3>
+  <div class="card card-yellow">
+    <div class="flow" style="margin-bottom:12px;">
+      <div class="flow-box blue">阶段一：WebUI/在线服务<br>理解SD基本概念</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box green">阶段二：ComfyUI<br>学习节点式操作</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-box purple">阶段三：ComfyUI<br>搭建动漫工作流</div>
+    </div>
+    <ul>
+      <li><strong>阶段一（1-2周）：</strong>用WebUI或在线服务学会出图，理解Checkpoint、Prompt、Sampler等概念</li>
+      <li><strong>阶段二（2-4周）：</strong>转入ComfyUI，用最简单的工作流复现WebUI的功能</li>
+      <li><strong>阶段三（持续）：</strong>逐步加入ControlNet、LoRA、AnimateDiff，搭建完整动漫工作流</li>
+    </ul>
+  </div>
+
+</body>
+</html>
